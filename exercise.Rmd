@@ -1,0 +1,166 @@
+---
+title: "Exercise Model of Self Reported Results"
+author: "Theodore Kahn"
+date: "October 19, 2015"
+output: 
+     html_document:
+          toc: true
+          theme: united
+          highlight: textmate
+---
+##Introduction
+This study examines the ability to detect the quality, not quantity, of exercise performed. The premise is that improperly performed exercises impart less value to participants than exercises executed correctly. Therefore, there is benefit in providing feedback to people performing exercise regarding this metric. The exercise being studied are arm curls using dumbbells. Sensors are attached to subjects at the forearm, waist, and arm, as well as the dumbbells themselves. Each sensor records acceleration in each of three axis thus providing 12 acceleration sensor readings.  
+
+From previous analyses, four incorrect forms of the exercise were characterized. Thus the dependent variable, *classe*, has five levels, one correct level, *A* and the four incorrect classifications. Subjects were instructed to perform the exercise conforming to each of the five classes. Sensor readings were then recorded and 40 additional variables calculated from the sensor readings.  
+
+The study objective is to see if a model can be developed that correctly predicts the class of the exercise based on the sensor readings and derived variables. A sample dataset of 12 cases is provided for testing purposes.  
+
+Further information about the project can be found [here](http://groupware.les.inf.puc-rio.br/har).  
+
+##Analysis Design, Overview and Summary  
+The Random Forest classification model was selected for its ability to produce highly accurate classifiers and estimate the importance of classification variables. Another advantage is its ability to take advantage of multi-core processing to speed up computation time.  
+
+Two lines of reasoning were examined:  
+
+First, I was interested in seeing how well the 12 measurement variables by themselves would perform. This model has two advantages: It's simple and it is easy to interpret. That is, exercisers could be instructed to adjust the force they used at the three sensor reading on their bodies resulting in a more productive workout. Such instructions would be more difficult or perhaps really impossible using derived variables. As it turns out, this simple model did surprisingly well, classifying 18 of the 20 quiz data items.  
+
+The second model used all available variables. A nice feature of Random Forests is that multi-collinearity is not an issue, therefore there was no need to check for highly-correlated variables. This model correctly predicted all the quiz questions. The model could probably be improved by removing poor predictors and/or reducing the variables through preprocessing, such as principle components.  
+
+##Processing Steps  
+
+###1. Specify libraries and read data  
+In looking through the csv data files I noticed that many variables had the values "NA", "#DIV/0!" or just blanks. These values were converted to the R missing value NA during the read process.
+
+```{r Read data}
+library(dplyr)
+library(caret)
+library(doMC)
+registerDoMC(cores = 7)
+allData <- read.csv('pml-training.csv', header= TRUE, sep= ',', na.strings= c('NA', '', '#DIV/0!'))
+allQuizData <- read.csv('pml-testing.csv', header= TRUE, sep= ',', na.strings= c('NA', '', '#DIV/0!'))
+```
+
+###2. Address Missing Values and Unrelated Variables  
+As noted above, both the training and testing datasets have missing values. Given that the primary objective of this project is to predict the correct classification of the test dataset, I removed all variables having missing values from the test dataset. And then performed the same function for the training dataset.  
+
+Through observation and reading the primary research material (referenced above), it was determined that the first seven variables were concerned with providing identification information or recorded the time events were recorded. These variables were eliminated from both model during the model creation steps.
+
+```{r Missing Values}
+# Determine the number of missing values for each variable in the test dataset.
+varsWithQuizData <- apply(allQuizData, 2, function(aVar) {sum(is.na(aVar))} )
+
+# Create a vector with only those variables with no missing data.
+validQuizDataVars <- allQuizData[, which(varsWithQuizData == 0)]
+
+# Use the above vector to subset the training dataset to only those variables is no missing values.
+validDataVars <- allData[, which(varsWithQuizData == 0)]
+```
+
+###3. Create the Accel Model and Output Results  
+
+```{r Run Accel Model}
+# Set the model name variable.
+modelName <- 'rfPredict_accel_vars.rda'
+
+# The first 7 variables in the training and quiz datasets were contained either ID information 
+# or timing information for windowing functions the investorators used for their analyses. These 
+# variables are not relevent for this work and so are removed.
+validData <- validDataVars[, 8:60]
+validQuizData <- validQuizDataVars[, 8:60]
+
+# Create data frames having only the accelerometer variables
+validData <- select(validDataVars, classe, starts_with('accel'))
+validQuizData <- select(validQuizDataVars, starts_with('accel'))
+
+# Set the seed for reproducability and create the training and testing datasets
+set.seed(45)
+inTrain <- createDataPartition(y= validData$classe, p=0.7, list= FALSE)
+training <- validData[inTrain,]
+testing <- validData[-inTrain,]
+
+# Create the model, if it does not already exist. Otherwise, load the existing model.
+if (file.exists(modelName)) {
+     load(modelName)
+} else {
+     rfModel <- train(classe ~., method= 'rf',  data= training)
+     save(rfModel, file= modelName)
+}
+
+# Predict values from the testing dataset
+rfPredict <- predict(rfModel, newdata= testing)
+
+print(rfModel)
+print(rfModel$finalModel)
+plot(rfModel$finalModel, main= modelName)
+print(confusionMatrix(testing$classe, rfPredict))
+plot(varImp(rfModel))
+
+# Predict values from the quiz dataset
+rfPredictQuiz <- predict(rfModel, newdata= allQuizData)
+rfPredictQuiz
+```
+
+###4. Create the All Variables Model and Output Results  
+
+```{r All Vars Model, fig.height= 10}
+# Set the model name variable.
+modelName <- 'rfPredict_all_vars.rda'
+
+# The first 7 variables in the training and quiz datasets were contained either ID information 
+# or timing information for windowing functions the investorators used for their analyses. These 
+# variables are not relevent for this work and so are removed.
+validData <- validDataVars[, 8:60]
+validQuizData <- validQuizDataVars[, 8:60]
+
+# Set the seed for reproducability and create the training and testing datasets
+set.seed(45)
+inTrain <- createDataPartition(y= validData$classe, p=0.7, list=FALSE)
+training <- validData[inTrain,]
+testing <- validData[-inTrain,]
+
+# Create the model, if it does not already exist. Otherwise, load the existing model.
+if (file.exists(modelName)) {
+     load(modelName)
+} else {
+     rfModel <- train(classe ~., method= 'rf',  data= training)
+     save(rfModel, file= modelName)
+}
+
+# Predict values from the testing dataset
+rfPredict <- predict(rfModel, newdata= testing)
+
+print(rfModel)
+plot(rfModel$finalModel)
+plot(varImp(rfModel, title= modelName))
+
+print(rfModel$finalModel)
+print(confusionMatrix(testing$classe, rfPredict))
+
+# Predict values from the quiz dataset
+rfPredictQuiz <- predict(rfModel, newdata= validQuizData)
+rfPredictQuiz
+```
+
+#Discussion of Results
+Both models were built identically using the caret package Random Forest decision tree classifier and accepting all default tuning parameters. The only difference between the models are the independent variables (aka features) used for predicting exercise method classification.  
+
+The primary objective was to accurately predict the 20 test cases. A secondary objective was to understand how well the 12 actual acceleration measurement variables would be able to correctly classify out of sample data.  
+
+The three key statistics for the two models are summarized in the table below:  
+  
+Model                       | Accuracy | Out of Sample Error (OOB) | Percent of Correctly Predicted Test Samples
+------------------------    | -------- | ------------------------- | -------------------------------------------
+Acceleration Variables (12) | 94% | 5.46% | 90%
+All Variables (52) | 99% | 0.59% | 100%
+
+
+While the two models have good accuracy, the much higher OOB for the Acceleration model suggests that it is overfitted and too well-tuned to the training data.  
+
+The graphs showing error as a function of trees for the different classifications are quiet similar for both models and when coupled with the optimal number of predictors being used at each split (mtry = 2) being identical, suggests that both models have similar structures.  
+
+#Summary and Future Work  
+Both models have value: The Acceleration model is simple and reasonable while the All Variables model excels at prediction. Ideally, it would be nice to have a single model with both characteristics.  
+
+Toward that end, one might start looking at the two graphics depicting the importance of the variables in their respective models. Using this information, it might be useful to explore the relationships among the top performers in each model. Perhaps here a principle components approach might be helpful in developing an effective parsimonious model.
+
+
